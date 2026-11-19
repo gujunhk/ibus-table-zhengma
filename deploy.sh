@@ -7,21 +7,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ZHENGMA_TXT="$SCRIPT_DIR/zhengma.txt"
 CUSTOM_TXT="$SCRIPT_DIR/zhengma-custom.txt"
-MERGED_TXT="/tmp/zhengma-merged-$$.txt"
-OUTPUT_DB="$SCRIPT_DIR/zhengma.db"
 SYSTEM_DB="/usr/share/ibus-table/tables/zhengma.db"
-
-cleanup() {
-    rm -f "$MERGED_TXT" 2>/dev/null
-    [ -z "${TEMP_MERGED:-}" ] || rm -f "$TEMP_MERGED" 2>/dev/null
-}
-trap cleanup EXIT
 
 error_exit() {
     echo "$@" >&2
-    cleanup
     exit 1
 }
+
+BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/zhengma-build.XXXXXXXX") || error_exit "✗ 错误：无法创建临时构建目录"
+trap 'rm -r -- "$BUILD_DIR"' EXIT
+MERGED_TXT="$BUILD_DIR/merged.txt"
+TEMP_MERGED="$BUILD_DIR/custom.txt"
+VERSIONED_TXT="$BUILD_DIR/versioned.txt"
+BUILD_DB="$BUILD_DIR/zhengma.db"
+
+BUILD_ONLY=0
+OUTPUT_PATH=""
+if [ "$#" -gt 0 ]; then
+    [ "$#" -eq 2 ] && [ "$1" = "--build-only" ] \
+        || error_exit "用法：$0 [--build-only 输出数据库路径]"
+    BUILD_ONLY=1
+    OUTPUT_PATH=$(realpath -m -- "$2") || error_exit "✗ 错误：无法解析输出路径"
+    case "$OUTPUT_PATH" in
+        "$SCRIPT_DIR"|"$SCRIPT_DIR"/*)
+            error_exit "✗ 错误：生成的数据库必须保存到仓库目录之外"
+            ;;
+    esac
+fi
 
 echo "================================"
 echo "郑码输入法编译和部署"
@@ -44,7 +56,7 @@ if [ -f "$CUSTOM_TXT" ]; then
     echo "   - 检查词条格式..."
 
     CHECK_ERROR=""
-    while IFS= read -r line; do
+    while IFS= read -r line || [ -n "$line" ]; do
         # 跳过注释和空行
         [[ "$line" =~ ^# ]] && continue
         [[ -z "$line" ]] && continue
@@ -102,10 +114,7 @@ if [ -f "$CUSTOM_TXT" ]; then
     ADDED=0
     SKIPPED=0
 
-    # 使用临时文件存储结果（避免 while 管道子 shell 问题）
-    TEMP_MERGED="/tmp/zhengma-temp-$$.txt"
-
-    while IFS= read -r line; do
+    while IFS= read -r line || [ -n "$line" ]; do
         # 跳过注释和空行
         [[ "$line" =~ ^# ]] && continue
         [[ -z "$line" ]] && continue
@@ -120,7 +129,7 @@ if [ -f "$CUSTOM_TXT" ]; then
             ((SKIPPED++))
         else
             # ibus-table-createdb 要求：编码 TAB 词汇 TAB 频率
-            printf '%s\t%s\t0\n' "$code" "$word" >> "$TEMP_MERGED"
+            printf '%s\t%s\t0\n' "$code" "$word" >> "$TEMP_MERGED" || error_exit "✗ 错误：无法写入自定义词条"
             ((ADDED++))
         fi
     done < "$CUSTOM_TXT"
@@ -134,9 +143,6 @@ if [ -f "$CUSTOM_TXT" ]; then
             }
             { print }
         ' "$ZHENGMA_TXT" > "$MERGED_TXT" || error_exit "✗ 错误：无法插入自定义词条"
-        rm -f "$TEMP_MERGED"
-    else
-        cp "$ZHENGMA_TXT" "$MERGED_TXT" || error_exit "✗ 错误：无法复制码表"
     fi
 
     echo "   ✓ 添加了 $ADDED 条自定义词条"
@@ -150,14 +156,25 @@ fi
 echo
 
 echo "2️⃣  编译数据库..."
-ibus-table-createdb -s "$MERGED_TXT" -n "$OUTPUT_DB" 2>&1 | head -20
+# IBus Table 按 SERIAL_NUMBER 判断旧的候选缓存是否还能使用。
+# 用合并后的码表计算版本号，自定义词条变动时也会使缓存失效。
+CHECKSUM=$(cksum < "$MERGED_TXT") || error_exit "✗ 错误：无法计算码表版本号"
+SERIAL_NUMBER=${CHECKSUM%% *}
+sed "s/^SERIAL_NUMBER = [0-9][0-9]*$/SERIAL_NUMBER = $SERIAL_NUMBER/" \
+    "$MERGED_TXT" > "$VERSIONED_TXT" || error_exit "✗ 错误：无法写入码表版本号"
 
-if [ ! -f "$OUTPUT_DB" ]; then
-    error_exit "✗ 错误: 编译后找不到 $OUTPUT_DB"
+ibus-table-createdb -s "$VERSIONED_TXT" -n "$BUILD_DB" || error_exit "✗ 错误：编译数据库失败"
+[ -s "$BUILD_DB" ] || error_exit "✗ 错误：编译后找不到数据库"
+
+echo "   ✓ 编译成功"
+ls -lh "$BUILD_DB" | awk '{print "   (" $5 ")"}'
+
+if [ "$BUILD_ONLY" -eq 1 ]; then
+    install -D -m 644 -- "$BUILD_DB" "$OUTPUT_PATH" \
+        || error_exit "✗ 错误：无法写入 $OUTPUT_PATH"
+    echo "   ✓ 数据库已生成: $OUTPUT_PATH"
+    exit 0
 fi
-
-echo "   ✓ 编译成功: $OUTPUT_DB"
-ls -lh "$OUTPUT_DB" | awk '{print "   (" $5 ")"}'
 
 echo
 
@@ -165,10 +182,10 @@ echo "3️⃣  部署到系统..."
 
 if [ ! -w "$SYSTEM_DB" ]; then
     echo "   需要 sudo 权限来覆盖 $SYSTEM_DB"
-    sudo cp "$OUTPUT_DB" "$SYSTEM_DB" || error_exit "✗ 错误: 无法使用 sudo 复制文件"
+    sudo install -m 644 -- "$BUILD_DB" "$SYSTEM_DB" || error_exit "✗ 错误: 无法使用 sudo 安装数据库"
     echo "   ✓ 已复制到 $SYSTEM_DB"
 else
-    cp "$OUTPUT_DB" "$SYSTEM_DB" || error_exit "✗ 错误: 无法复制文件到 $SYSTEM_DB"
+    install -m 644 -- "$BUILD_DB" "$SYSTEM_DB" || error_exit "✗ 错误: 无法安装数据库到 $SYSTEM_DB"
     echo "   ✓ 已复制到 $SYSTEM_DB"
 fi
 

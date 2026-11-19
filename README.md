@@ -30,8 +30,7 @@
 ├── zhengma-custom.txt       ← 自定义词条（词 TAB 编码）
 ├── build-zhengma.py         ← 造词脚本：自动计算编码
 ├── deploy.sh                ← 部署脚本：编译 + 安装
-├── README.md                ← 本文件
-└── zhengma.db               ← 当前部署脚本生成的数据库
+└── README.md                ← 本文件
 ```
 
 ## 使用方法
@@ -74,7 +73,7 @@ python3 build-zhengma.py
 bash deploy.sh
 ```
 
-脚本会合并码表、生成 `zhengma.db`，安装到 `/usr/share/ibus-table/tables/` 并重启 IBus。需要 `ibus-table-createdb` 命令；如果系统提示找不到命令，请先安装发行版提供的 ibus-table 软件包。脚本可能会通过 `sudo` 请求权限。
+脚本会合并码表，在系统临时目录生成 `zhengma.db`，安装到 `/usr/share/ibus-table/tables/` 并重启 IBus。仓库目录不会保存生成的数据库。需要 `ibus-table-createdb` 命令；如果系统提示找不到命令，请先安装发行版提供的 ibus-table 软件包。脚本可能会通过 `sudo` 请求权限。
 
 ## 安装方案
 
@@ -104,12 +103,13 @@ Gitee 上的[原安装说明](https://gitee.com/dunszou/ibus-table-zhengma)以 U
 
    若列表未更新，先注销并重新登录，再检查输入源列表。
 
-### 方案二：手动安装已有数据库
+### 方案二：生成数据库后手动安装
 
-如果不需要合并自定义词条或重新编译，可以使用仓库中的 `zhengma.db`：
+需要手动安装时，先用 `deploy.sh` 合并码表并生成数据库到仓库目录之外，再复制数据库和图标到 ibus-table 系统目录：
 
 ```bash
-sudo install -D -m 644 zhengma.db /usr/share/ibus-table/tables/zhengma.db
+./deploy.sh --build-only /tmp/zhengma.db
+sudo install -D -m 644 /tmp/zhengma.db /usr/share/ibus-table/tables/zhengma.db
 sudo install -D -m 644 zhengma.svg /usr/share/ibus-table/icons/zhengma.svg
 ibus restart
 ```
@@ -140,7 +140,7 @@ ibus restart
 bash deploy.sh
 ```
 
-部署后生成的 `zhengma.db` 将仅包含原始码表（除 `AUTO_COMMIT = FALSE` 这个参数外，与 hevz 源码定义一致）。
+部署后安装的数据库将仅包含原始码表（除 `AUTO_COMMIT = FALSE` 这个参数外，与 hevz 源码定义一致）。
 
 ## ☁️ 云端迁移
 

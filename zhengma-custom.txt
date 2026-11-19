@@ -10,3 +10,5 @@
 大模型	gfea
 深度学习	vtvy
 生成式	mhvh
+布洛芬	gvre
+豆包	ajry
