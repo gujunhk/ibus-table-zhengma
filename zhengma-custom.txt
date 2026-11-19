@@ -1,0 +1,12 @@
+# 自定义词条列表
+# 格式：词汇 TAB 编码
+#
+# 如果编码为空，run build-zhengma.py 会根据构词规则自动计算
+#
+# 例子：
+# 大模型	gfea
+# 深度学习	deea
+# 生成式	aafa
+大模型	gfea
+深度学习	vtvy
+生成式	mhvh
