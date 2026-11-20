@@ -12,3 +12,5 @@
 生成式	mhvh
 布洛芬	gvre
 豆包	ajry
+提示词	dbks
+智能体	mzqn
